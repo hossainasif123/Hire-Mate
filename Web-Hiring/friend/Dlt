@@ -1,0 +1,141 @@
+@login_required(login_url='login')
+def send_friend_request(request, pk):
+    try:
+        sender = request.user.profile
+        receiver = Profile.objects.get(id=pk)
+    except Profile.DoesNotExist:
+        return JsonResponse({'error': 'Recipient profile not found'}, status=404)
+    except:
+        return JsonResponse({'error': 'You must be logged in to send a friend request'}, status=401)
+
+    if request.method == 'POST':
+        existing_request = get_friend_request_or_false(sender, receiver)
+        if existing_request:
+            return JsonResponse({'error': 'A friend request has already been sent'}, status=400)
+
+        friend_request = FriendRequest(sender=sender, receiver=receiver)
+        friend_request.save()
+
+        # Create a notification for the receiver
+        notification = Notification.objects.create(
+            recipient=receiver,
+            message=f'You have received a friend request from {sender.user.username}.'
+        )
+        notification.save()
+
+        return JsonResponse({'success': 'Friend request sent'}, status=201)
+
+    return JsonResponse({'error': 'Invalid request method'}, status=405)
+
+from django.http import JsonResponse
+from .models import FriendRequest
+from .utils import get_friend_request_or_false
+
+
+@login_required(login_url='login')
+def accept_friend_request(request, friend_request_id):
+    try:
+        friend_request = FriendRequest.objects.get(id=friend_request_id)
+    except FriendRequest.DoesNotExist:
+        return JsonResponse({'error': 'Friend request not found'}, status=404)
+
+    user = request.user.profile
+    if friend_request.receiver != user:
+        return JsonResponse({'error': 'You are not authorized to accept this friend request'}, status=403)
+
+    if request.method == 'POST':
+        friend_request.accept()
+
+        # Send a notification to the sender
+        sender = friend_request.sender
+        notification = Notification.objects.create(
+            recipient=sender,
+            message=f'Your friend request to {user.user.username} has been accepted.'
+        )
+        notification.save()
+
+        return JsonResponse({'success': 'Friend request accepted'}, status=200)
+
+    return JsonResponse({'error': 'Invalid request method'}, status=405)
+
+
+@login_required(login_url='login')
+def remove_friend(request, *args, **kwargs):
+	user = request.user
+	payload = {}
+	if request.method == "POST" and user.is_authenticated:
+		user_id = request.POST.get("receiver_user_id")
+		if user_id:
+			try:
+				removee = Profile.objects.get(pk=user_id)
+				friend_list = FriendList.objects.get(user=user)
+				friend_list.unfriend(removee)
+				payload['response'] = "Successfully removed that friend."
+			except Exception as e:
+				payload['response'] = f"Something went wrong: {str(e)}"
+		else:
+			payload['response'] = "There was an error. Unable to remove that friend."
+	else:
+		# should never happen
+		payload['response'] = "You must be authenticated to remove a friend."
+	return HttpResponse(json.dumps(payload), content_type="application/json")
+
+
+
+from django.http import JsonResponse
+from .models import FriendRequest, Notification
+
+@login_required(login_url='login')
+def decline_friend_request(request, pk):
+    try:
+        friend_request = FriendRequest.objects.get(id=pk)
+    except FriendRequest.DoesNotExist:
+        return JsonResponse({'error': 'Friend request not found'}, status=404)
+
+    user = request.user.profile
+    if friend_request.receiver != user:
+        return JsonResponse({'error': 'You are not authorized to decline this friend request'}, status=403)
+
+    if request.method == 'POST':
+        friend_request.decline()
+
+        # Send a notification to the sender
+        sender = friend_request.sender
+        notification = Notification.objects.create(
+            recipient=sender,
+            message=f'Your friend request to {user.user.username} has been declined.'
+        )
+        notification.save()
+
+        return JsonResponse({'success': 'Friend request declined'}, status=200)
+
+    return JsonResponse({'error': 'Invalid request method'}, status=405)
+
+@login_required(login_url='login')
+def cancel_friend_request(request, *args, **kwargs):
+	user = request.user
+	payload = {}
+	if request.method == "POST" and user.is_authenticated:
+		user_id = request.POST.get("receiver_user_id")
+		if user_id:
+			receiver = Profile.objects.get(pk=user_id)
+			try:
+				friend_requests = FriendRequest.objects.filter(sender=user, receiver=receiver, is_active=True)
+			except FriendRequest.DoesNotExist:
+				payload['response'] = "Nothing to cancel. Friend request does not exist."
+
+			# There should only ever be ONE active friend request at any given time. Cancel them all just in case.
+			if len(friend_requests) > 1:
+				for request in friend_requests:
+					request.cance()
+				payload['response'] = "Friend request canceled."
+			else:
+				# found the request. Now cancel it
+				friend_requests.first().cancel()
+				payload['response'] = "Friend request canceled."
+		else:
+			payload['response'] = "Unable to cancel that friend request."
+	else:
+		# should never happen
+		payload['response'] = "You must be authenticated to cancel a friend request."
+	return HttpResponse(json.dumps(payload), content_type="application/json")

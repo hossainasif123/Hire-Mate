@@ -1,0 +1,319 @@
+
+
+
+
+from django.dispatch.dispatcher import receiver
+from django.shortcuts import render, redirect
+from django.contrib.auth import login, authenticate, logout
+from django.contrib.auth.decorators import login_required
+from django.contrib import messages
+from django.contrib.auth.models import User
+from django.urls import conf
+from django.db.models import Q
+from .models import Profile, Message, FriendRequest
+from .forms import CustomUserCreationForm, ProfileForm, SkillForm, MessageForm
+from .utils import searchProfiles, paginateProfiles
+from friend.utils import get_friend_request_or_false
+from friend.friend_request_status import FriendRequestStatus
+from friend.models import FriendList, FriendRequest
+from django.http import HttpResponse
+
+def loginUser(request):
+    page = 'login'
+
+    if request.user.is_authenticated:
+        return redirect('profiles')
+
+    if request.method == 'POST':
+        username = request.POST['username'].lower()
+        password = request.POST['password']
+
+        try:
+            user = User.objects.get(username=username)
+        except User.DoesNotExist:
+            messages.error(request, 'Username does not exist')
+            return render(request, 'users/login_register.html', {'page': page})
+
+        user = authenticate(request, username=username, password=password)
+
+        if user is not None:
+            login(request, user)
+            return redirect(request.GET.get('next', 'account'))
+
+        else:
+            messages.error(request, 'Username OR password is incorrect')
+            return render(request, 'users/login_register.html', {'page': page})
+
+    return render(request, 'users/login_register.html', {'page': page})
+
+
+def logoutUser(request):
+    logout(request)
+    messages.info(request, 'User was logged out!')
+    return redirect('login')
+
+
+def registerUser(request):
+    page = 'register'
+    form = CustomUserCreationForm()
+
+    if request.method == 'POST':
+        form = CustomUserCreationForm(request.POST)
+        if form.is_valid():
+            user = form.save(commit=False)
+            user.username = user.username.lower()
+            user.save()
+
+            messages.success(request, 'User account was created!')
+
+            login(request, user)
+            return redirect('edit-account')
+
+        else:
+            messages.error(request, 'An error has occurred during registration')
+
+    context = {'page': page, 'form': form}
+    return render(request, 'users/login_register.html', context)
+
+
+def profiles(request):
+    profiles, search_query = searchProfiles(request)
+    custom_range, profiles = paginateProfiles(request, profiles, 3)
+
+    
+
+def userProfile(request, pk):
+
+
+    profile = Profile.objects.get(id=pk)
+    try:
+            friend_list = FriendList.objects.get(user=profile)
+    except FriendList.DoesNotExist:
+            friend_list = FriendList(user=profile)
+            friend_list.save()
+            friends = friend_list.friends.all()
+            is_self = True
+            is_friend = False
+            request_sent = FriendRequestStatus.NO_REQUEST_SENT.value
+            friend_requests = None
+            user = request.user
+            if user.is_authenticated and user != profile:
+             is_self = False
+            if friends.filter(pk=user.id):
+                is_friend = True
+            else:
+                is_friend = False
+                if get_friend_request_or_false(sender=account, receiver=user) is not False:
+                    request_sent = FriendRequestStatus.THEM_SENT_TO_YOU.value
+                    context['pending_friend_request_id'] = get_friend_request_or_false(sender=account, receiver=user).id
+                elif get_friend_request_or_false(sender=user, receiver=account) is not False:
+                    request_sent = FriendRequestStatus.YOU_SENT_TO_THEM.value
+                else:
+                    request_sent = FriendRequestStatus.NO_REQUEST_SENT.value
+        elif not user.is_authenticated:
+            is_self = False
+        else:
+            try:
+                friend_requests = FriendRequest.objects.filter(receiver=user, is_active=True)
+            except:
+                pass
+    topSkills = profile.skill_set.exclude(description__exact="")
+    otherSkills = profile.skill_set.filter(description="")
+   
+    context = {'profile': profile, 'topSkills': topSkills,
+               "otherSkills": otherSkills,'friends':friends}
+    return render(request, 'users/user-profile.html', context)
+
+
+
+
+
+    user_id = request.GET.get("id")
+    try:
+        account = Profile.objects.get(pk=id)
+    except Profile.DoesNotExist:
+        return HttpResponse("Something went wrong")
+
+    
+
+      
+
+        try:
+            friend_list = FriendList.objects.get(user=account)
+        except FriendList.DoesNotExist:
+            friend_list = FriendList(user=account)
+            friend_list.save()
+        friends = friend_list.friends.all()
+        context['friends'] = friends
+
+        is_self = True
+        is_friend = False
+        request_sent = FriendRequestStatus.NO_REQUEST_SENT.value
+        friend_requests = None
+        user = request.user
+        if user.is_authenticated and user != account:
+            is_self = False
+            if friends.filter(pk=user.id):
+                is_friend = True
+            else:
+                is_friend = False
+                if get_friend_request_or_false(sender=account, receiver=user) is not False:
+                    request_sent = FriendRequestStatus.THEM_SENT_TO_YOU.value
+                    context['pending_friend_request_id'] = get_friend_request_or_false(sender=account, receiver=user).id
+                elif get_friend_request_or_false(sender=user, receiver=account) is not False:
+                    request_sent = FriendRequestStatus.YOU_SENT_TO_THEM.value
+                else:
+                    request_sent = FriendRequestStatus.NO_REQUEST_SENT.value
+        elif not user.is_authenticated:
+            is_self = False
+        else:
+            try:
+                friend_requests = FriendRequest.objects.filter(receiver=user, is_active=True)
+            except:
+                pass
+
+        context['is_self'] = is_self
+        context['is_friend'] = is_friend
+        context['request_sent'] = request_sent
+        context['friend_requests'] = friend_requests
+
+    return render(request, 'users/profiles.html', context)
+
+    try:
+        profile = Profile.objects.get(id=pk)
+    except Profile.DoesNotExist:
+        return HttpResponse("Profile not found.")
+
+    topSkills = profile.skill_set.exclude(description__exact="")
+    otherSkills = profile.skill_set.filter(description="")
+
+    context = {'profile': profile, 'topSkills': topSkills, "otherSkills": otherSkills}    return render(request, 'users/user-profile.html', context)
+
+
+@login_required(login_url='login')
+def userAccount(request):
+    profile = request.user.profile
+    skills = profile.skill_set.all()
+    projects = profile.project_set.all()
+
+    context = {'profile': profile, 'skills': skills, 'projects': projects}
+    return render(request, 'users/account.html', context)
+
+
+@login_required(login_url='login')
+def editAccount(request):
+    profile = request.user.profile
+    form = ProfileForm(instance=profile)
+
+    if request.method == 'POST':
+        form = ProfileForm(request.POST, request.FILES, instance=profile)
+        if form.is_valid():
+            form.save()
+            return redirect('account')
+
+    context = {'form': form}
+    return render(request, 'users/profile_form.html', context)
+
+
+@login_required(login_url='login')
+def createSkill(request):
+    profile = request.user.profile
+    form = SkillForm()
+
+    if request.method == 'POST':
+        form = SkillForm(request.POST)
+        if form.is_valid():
+            skill = form.save(commit=False)
+            skill.owner = profile
+            skill.save()
+            messages.success(request, 'Skill was added successfully!')
+            return redirect('account')
+
+    context = {'form': form}
+    return render(request, 'users/skill_form.html', context)
+
+
+@login_required(login_url='login')
+def updateSkill(request, pk):
+    profile = request.user.profile
+    skill = profile.skill_set.get(id=pk)
+    form = SkillForm(instance=skill)
+
+    if request.method == 'POST':
+        form = SkillForm(request.POST, instance=skill)
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'Skill was updated successfully!')
+            return redirect('account')
+
+    context = {'form': form}
+    return render(request, 'users/skill_form.html', context)
+
+
+@login_required(login_url='login')
+def deleteSkill(request, pk):
+    profile = request.user.profile
+    skill = profile.skill_set.get(id=pk)
+    if request.method == 'POST':
+        skill.delete()
+        messages.success(request, 'Skill was deleted successfully!')
+        return redirect('account')
+
+    context = {'object': skill}
+    return render(request, 'delete_template.html', context)
+
+
+@login_required(login_url='login')
+def inbox(request):
+    profile = request.user.profile
+    messageRequests = profile.messages.all()
+    unreadCount = messageRequests.filter(is_read=False).count()
+    context = {'messageRequests': messageRequests, 'unreadCount': unreadCount}
+    return render(request, 'users/inbox.html', context)
+
+
+@login_required(login_url='login')
+def viewMessage(request, pk):
+    profile = request.user.profile
+    try:
+        message = profile.messages.get(id=pk)
+    except Message.DoesNotExist:
+        return HttpResponse("Message not found.")
+
+    if not message.is_read:
+        message.is_read = True
+        message.save()
+
+    context = {'message': message}
+    return render(request, 'users/message.html', context)
+
+
+def createMessage(request, pk):
+    recipient = Profile.objects.get(id=pk)
+    form = MessageForm()
+
+    try:
+        sender = request.user.profile
+    except:
+        sender = None
+
+    if request.method == 'POST':
+        form = MessageForm(request.POST)
+        if form.is_valid():
+            message = form.save(commit=False)
+            message.sender = sender
+            message.recipient = recipient
+
+            if sender:
+                message.name = sender.name
+                message.email = sender.email
+            message.save()
+
+            messages.success(request, 'Your message was successfully sent!')
+            return redirect('user-profile', pk=recipient.id)
+
+    context = {'recipient': recipient, 'form': form}
+    return render(request, 'users/message_form.html', context)
+
+
+
